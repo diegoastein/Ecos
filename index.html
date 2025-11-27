@@ -69,16 +69,17 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
         // ==========================================
-        // CONFIGURACIÓN (Area para el desarrollador)
+        // CONFIGURACIÓN (CORREGIDA)
         // ==========================================
-      const firebaseConfig = {
-  apiKey: "AIzaSyD3R75GOUsBoMHjWAEgaDKIpXr89wMV1f8",
-  authDomain: "ecografias-cede4.firebaseapp.com",
-  projectId: "ecografias-cede4",
-  storageBucket: "ecografias-cede4.firebasestorage.app",
-  messagingSenderId: "523301799564",
-  appId: "1:523301799564:web:81137e060bcfd62a5a9da9"
-};
+        // IMPORTANTE: He renombrado la variable a 'manualConfig' para que coincida con la lógica
+        const manualConfig = {
+            apiKey: "AIzaSyD3R75GOUsBoMHjWAEgaDKIpXr89wMV1f8",
+            authDomain: "ecografias-cede4.firebaseapp.com",
+            projectId: "ecografias-cede4",
+            storageBucket: "ecografias-cede4.firebasestorage.app",
+            messagingSenderId: "523301799564",
+            appId: "1:523301799564:web:81137e060bcfd62a5a9da9"
+        };
 
         // ==========================================
         // UTILIDADES Y LÓGICA DE NEGOCIO
@@ -87,15 +88,15 @@
         // Inicialización segura de Firebase
         let db = null;
         let auth = null;
-        // Validación básica: que no sea el placeholder y que tenga una longitud mínima razonable
-        const isConfigured = manualConfig.apiKey !== "TU_API_KEY_AQUI" && manualConfig.apiKey !== "no tengo" && manualConfig.apiKey.length > 10;
+        // Validación básica
+        const isConfigured = manualConfig.apiKey && manualConfig.apiKey !== "TU_API_KEY_AQUI" && manualConfig.apiKey !== "no tengo" && manualConfig.apiKey.length > 10;
         
         if (isConfigured) {
             try {
                 const app = initializeApp(manualConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                console.log("Firebase inicializado correctamente.");
+                console.log("Firebase inicializado correctamente con proyecto:", manualConfig.projectId);
             } catch (e) {
                 console.error("Error al iniciar Firebase:", e);
             }
