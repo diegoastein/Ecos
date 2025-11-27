@@ -67,7 +67,8 @@
         import { 
             Activity, Users, FileText, Save, Plus, Trash2, 
             Share2, Download, Search, AlertCircle, CheckCircle, X,
-            Calendar, Database, Settings, Edit, User, WifiOff, ChevronDown
+            Calendar, Database, Settings, Edit, User, WifiOff, ChevronDown,
+            PieChart, BarChart2
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
@@ -98,13 +99,13 @@
                 const app = initializeApp(manualConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                console.log("Firebase inicializado correctamente.");
+                console.log("Firebase inicializado correctamente con proyecto:", manualConfig.projectId);
             } catch (e) {
                 console.error("Error al iniciar Firebase:", e);
             }
         }
 
-        // Listas iniciales
+        // Listas iniciales por defecto (si no hay nada en memoria)
         const ESTUDIOS_INICIALES = [
             "Cerebral", "Abdominal", "Renal", "Caderas", "Partes Blandas", "Doppler"
         ];
@@ -353,8 +354,11 @@
                             // === ESCUCHAR CAMBIOS EN LA NUBE ===
                             const q = collection(db, "ecografias");
                             const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+                                // Obtener datos de la nube
                                 const cloudData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
                                 console.log("Datos sincronizados desde la nube:", cloudData.length);
+                                
+                                // Actualizar estado y localstorage con la verdad de la nube
                                 setRecords(cloudData);
                                 localStorage.setItem('eco_records', JSON.stringify(cloudData));
                             }, (error) => {
@@ -377,6 +381,7 @@
                 return () => window.removeEventListener('online', handleOnline);
             }, []);
 
+            // Funciones para registrar nuevos items globalmente
             const registerNewStudy = (newStudy) => {
                  if (!studiesList.includes(newStudy)) {
                      const updated = [...studiesList, newStudy];
@@ -422,6 +427,7 @@
                 try {
                     const newRecord = { ...recordData, id: recordData.id || generateId(), updatedAt: new Date().toISOString() };
                     
+                    // Actualización optimista local
                     let updatedRecords;
                     if (recordData.id) {
                         updatedRecords = records.map(r => r.id === recordData.id ? newRecord : r);
@@ -454,17 +460,19 @@
             const deleteRecord = async (id) => {
                 if(!confirm("¿Estás seguro de eliminar este registro?")) return;
                 
+                // 1. Borrado local optimista (para que desaparezca rápido)
                 const updatedRecords = records.filter(r => r.id !== id);
                 setRecords(updatedRecords);
                 localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
                 
+                // 2. Borrado en la nube
                 if (db && user && navigator.onLine) {
                     try {
                         await deleteDoc(doc(db, "ecografias", id));
                         addToast("Registro eliminado de la nube");
                     } catch(e) {
                         console.error("Error borrando en nube", e);
-                        addToast("Error al borrar en nube", "warning");
+                        addToast("Error al borrar en nube, se borrará localmente", "warning");
                     }
                 } else {
                     addToast("Registro borrado localmente (offline)");
@@ -984,21 +992,41 @@
             const stats = useMemo(() => {
                 const filtered = records.filter(r => r.date.startsWith(selectedMonth));
                 const total = filtered.length;
+                
+                // Cálculos básicos
                 const uniquePatients = new Set(filtered.map(r => (r.patientName || r.firstName + r.lastName) + r.age)).size;
                 const ambulatorio = filtered.filter(r => r.type === 'Ambulatorio').length;
                 const internado = filtered.filter(r => r.type === 'Internado').length;
 
+                // 1. Contar Estudios (Todos, no solo el top)
                 const studyCounts = {};
                 filtered.forEach(r => r.studies.forEach(s => studyCounts[s] = (studyCounts[s] || 0) + 1));
-                const topStudy = Object.entries(studyCounts).sort((a,b) => b[1] - a[1])[0];
+                const allStudyCounts = Object.entries(studyCounts).sort((a,b) => b[1] - a[1]);
 
-                return { total, uniquePatients, ambulatorio, internado, topStudy };
+                // 2. Contar Diagnósticos (Top 5)
+                const diagCounts = {};
+                filtered.forEach(r => r.diagnoses.forEach(d => diagCounts[d] = (diagCounts[d] || 0) + 1));
+                const topDiagnoses = Object.entries(diagCounts).sort((a,b) => b[1] - a[1]).slice(0, 5);
+
+                return { total, uniquePatients, ambulatorio, internado, allStudyCounts, topDiagnoses };
             }, [records, selectedMonth]);
 
             const copyStats = async () => {
-                const text = `RESUMEN ESTADÍSTICO - ${selectedMonth}\n\nTotal Ecografías: ${stats.total}\n------------------\nAmbulatorio: ${stats.ambulatorio}\nInternado: ${stats.internado}\n\nPacientes Únicos: ${stats.uniquePatients}\nEstudio Top: ${stats.topStudy ? `${stats.topStudy[0]} (${stats.topStudy[1]})` : 'N/A'}`;
+                const text = `RESUMEN ESTADÍSTICO - ${selectedMonth}\n` +
+                             `Total Ecografías: ${stats.total}\n` +
+                             `------------------\n` +
+                             `Ambulatorio: ${stats.ambulatorio}\n` +
+                             `Internado: ${stats.internado}\n\n` +
+                             `Pacientes Únicos: ${stats.uniquePatients}\n` +
+                             `Top Diagnósticos:\n` +
+                             stats.topDiagnoses.map(d => `- ${d[0]}: ${d[1]}`).join('\n');
+                             
                 safeCopy(text, () => addToast("Resumen copiado al portapapeles"), () => addToast("Error al copiar", "error"));
             };
+
+            // Cálculo de porcentajes para barras
+            const ambPercentage = stats.total ? Math.round((stats.ambulatorio / stats.total) * 100) : 0;
+            const intPercentage = stats.total ? Math.round((stats.internado / stats.total) * 100) : 0;
 
             return (
                 <div className="space-y-6">
@@ -1018,9 +1046,11 @@
                         </button>
                     </div>
 
+                    {/* Resumen Principal */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-medical-500">
-                            <div className="flex justify-between items-start mb-4">
+                        {/* Total y Distribución */}
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-medical-500 md:col-span-2">
+                            <div className="flex justify-between items-start mb-6">
                                 <div>
                                     <p className="text-slate-500 text-sm font-bold uppercase">Total Ecografías</p>
                                     <h2 className="text-4xl font-bold text-slate-800 mt-2">{stats.total}</h2>
@@ -1029,12 +1059,31 @@
                                     <Activity size={24} />
                                 </div>
                             </div>
-                            <div className="pt-4 border-t border-slate-100 flex justify-between text-sm">
-                                <span className="text-blue-600 font-medium">Ambulatorio: {stats.ambulatorio}</span>
-                                <span className="text-red-500 font-medium">Internado: {stats.internado}</span>
+                            
+                            {/* Barra Visual de Progreso */}
+                            <div className="space-y-3">
+                                <div>
+                                    <div className="flex justify-between text-sm font-medium mb-1">
+                                        <span className="text-blue-600">Ambulatorio ({stats.ambulatorio})</span>
+                                        <span className="text-slate-400">{ambPercentage}%</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 rounded-full h-2.5">
+                                        <div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${ambPercentage}%` }}></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-sm font-medium mb-1">
+                                        <span className="text-red-500">Internado ({stats.internado})</span>
+                                        <span className="text-slate-400">{intPercentage}%</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 rounded-full h-2.5">
+                                        <div className="bg-red-500 h-2.5 rounded-full" style={{ width: `${intPercentage}%` }}></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
+                        {/* Pacientes Únicos */}
                         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-cyan-500">
                              <div className="flex justify-between items-start mb-4">
                                 <div>
@@ -1047,23 +1096,54 @@
                             </div>
                             <p className="text-xs text-slate-400 mt-2">Atendidos en este mes</p>
                         </div>
+                    </div>
 
-                         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-amber-500">
-                             <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <p className="text-slate-500 text-sm font-bold uppercase">Estudio Frecuente</p>
-                                    <h2 className="text-xl font-bold text-slate-800 mt-2 truncate max-w-[150px]" title={stats.topStudy ? stats.topStudy[0] : ''}>
-                                        {stats.topStudy ? stats.topStudy[0] : '-'}
-                                    </h2>
-                                </div>
-                                <div className="p-3 bg-amber-50 rounded-full text-amber-600">
-                                    <FileText size={24} />
-                                </div>
+                    {/* Listas de Detalles */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        
+                        {/* Top Diagnósticos */}
+                        <div className="bg-white p-6 rounded-lg shadow-md border border-slate-100">
+                            <div className="flex items-center gap-2 mb-4 text-amber-600">
+                                <PieChart size={20} />
+                                <h3 className="font-bold text-lg text-slate-800">Diagnósticos Frecuentes</h3>
                             </div>
-                            <p className="text-sm text-slate-500">
-                                Realizado <span className="font-bold text-slate-800">{stats.topStudy ? stats.topStudy[1] : 0}</span> veces
-                            </p>
+                            <div className="space-y-3">
+                                {stats.topDiagnoses.length === 0 ? (
+                                    <p className="text-slate-400 text-sm italic">Sin datos registrados</p>
+                                ) : (
+                                    stats.topDiagnoses.map(([name, count], idx) => (
+                                        <div key={name} className="flex items-center justify-between p-2 bg-amber-50 rounded border border-amber-100">
+                                            <div className="flex items-center gap-3">
+                                                <span className="font-bold text-amber-600 w-6">#{idx + 1}</span>
+                                                <span className="text-sm font-medium text-slate-700">{name}</span>
+                                            </div>
+                                            <span className="bg-white px-2 py-0.5 rounded text-xs font-bold text-slate-600 shadow-sm">{count}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                         </div>
+
+                        {/* Detalle de Estudios */}
+                        <div className="bg-white p-6 rounded-lg shadow-md border border-slate-100">
+                            <div className="flex items-center gap-2 mb-4 text-medical-600">
+                                <BarChart2 size={20} />
+                                <h3 className="font-bold text-lg text-slate-800">Detalle de Estudios</h3>
+                            </div>
+                            <div className="max-h-60 overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                                {stats.allStudyCounts.length === 0 ? (
+                                    <p className="text-slate-400 text-sm italic">Sin estudios registrados</p>
+                                ) : (
+                                    stats.allStudyCounts.map(([name, count]) => (
+                                        <div key={name} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 last:border-0">
+                                            <span className="text-slate-600">{name}</span>
+                                            <span className="font-bold text-medical-700">{count}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             );
