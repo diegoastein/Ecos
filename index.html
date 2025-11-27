@@ -65,11 +65,11 @@
             Calendar, Database, Settings, Edit, User, WifiOff
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
-        import { getFirestore, collection, addDoc, doc, setDoc, getDocs, query, where } from 'firebase/firestore';
+        import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
         // ==========================================
-        // CONFIGURACIÓN (CORREGIDA)
+        // CONFIGURACIÓN
         // ==========================================
         const manualConfig = {
             apiKey: "AIzaSyD3R75GOUsBoMHjWAEgaDKIpXr89wMV1f8",
@@ -231,24 +231,44 @@
                 if (savedStudies) setStudiesList(JSON.parse(savedStudies));
                 if (savedDiagnoses) setDiagnosesList(JSON.parse(savedDiagnoses));
 
-                // 2. Auth Anónimo
+                // 2. Auth Anónimo y Listener Realtime
                 if (isConfigured && auth) {
-                    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
                         setUser(currentUser);
                         setAuthLoading(false);
-                        if (currentUser && navigator.onLine) syncQueue();
-                        else if (!currentUser) signInAnonymously(auth).catch(err => {
-                            console.error("Error Auth:", err);
-                            setAuthLoading(false);
-                        });
+                        
+                        if (currentUser) {
+                            if (navigator.onLine) syncQueue(); // Subir pendientes
+                            
+                            // === ESCUCHAR CAMBIOS EN LA NUBE ===
+                            const q = collection(db, "ecografias");
+                            const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+                                // Obtener datos de la nube
+                                const cloudData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                                console.log("Datos sincronizados desde la nube:", cloudData.length);
+                                
+                                // Actualizar estado y localstorage con la verdad de la nube
+                                setRecords(cloudData);
+                                localStorage.setItem('eco_records', JSON.stringify(cloudData));
+                            }, (error) => {
+                                console.error("Error escuchando cambios:", error);
+                            });
+
+                            return () => unsubscribeSnapshot();
+                        } else {
+                            signInAnonymously(auth).catch(err => {
+                                console.error("Error Auth:", err);
+                                setAuthLoading(false);
+                            });
+                        }
                     });
-                    return () => unsubscribe();
+                    return () => unsubscribeAuth();
                 }
 
                 const handleOnline = () => { if (user) syncQueue(); };
                 window.addEventListener('online', handleOnline);
                 return () => window.removeEventListener('online', handleOnline);
-            }, [user]);
+            }, []);
 
             // Funciones para registrar nuevos items globalmente
             const registerNewStudy = (newStudy) => {
@@ -259,12 +279,28 @@
                  }
             }
 
+            const unregisterStudy = (studyToRemove) => {
+                if (confirm(`¿Eliminar "${studyToRemove}" de la lista de opciones?`)) {
+                    const updated = studiesList.filter(s => s !== studyToRemove);
+                    setStudiesList(updated);
+                    localStorage.setItem('eco_studies_list', JSON.stringify(updated));
+                }
+            }
+
             const registerNewDiagnosis = (newDiag) => {
                  if (!diagnosesList.includes(newDiag)) {
                      const updated = [...diagnosesList, newDiag];
                      setDiagnosesList(updated);
                      localStorage.setItem('eco_diagnoses_list', JSON.stringify(updated));
                  }
+            }
+
+            const unregisterDiagnosis = (diagToRemove) => {
+                if (confirm(`¿Eliminar "${diagToRemove}" de la lista de opciones?`)) {
+                    const updated = diagnosesList.filter(d => d !== diagToRemove);
+                    setDiagnosesList(updated);
+                    localStorage.setItem('eco_diagnoses_list', JSON.stringify(updated));
+                }
             }
 
             const addToast = (message, type = 'success') => {
@@ -280,6 +316,7 @@
                 try {
                     const newRecord = { ...recordData, id: recordData.id || generateId(), updatedAt: new Date().toISOString() };
                     
+                    // Actualización optimista local
                     let updatedRecords;
                     if (recordData.id) {
                         updatedRecords = records.map(r => r.id === recordData.id ? newRecord : r);
@@ -309,12 +346,26 @@
                 }
             };
 
-            const deleteRecord = (id) => {
+            const deleteRecord = async (id) => {
                 if(!confirm("¿Estás seguro de eliminar este registro?")) return;
+                
+                // 1. Borrado local optimista (para que desaparezca rápido)
                 const updatedRecords = records.filter(r => r.id !== id);
                 setRecords(updatedRecords);
                 localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
-                addToast("Registro eliminado");
+                
+                // 2. Borrado en la nube
+                if (db && user && navigator.onLine) {
+                    try {
+                        await deleteDoc(doc(db, "ecografias", id));
+                        addToast("Registro eliminado de la nube");
+                    } catch(e) {
+                        console.error("Error borrando en nube", e);
+                        addToast("Error al borrar en nube, se borrará localmente", "warning");
+                    }
+                } else {
+                    addToast("Registro borrado localmente (offline)");
+                }
             };
 
             const handleEdit = (record) => {
@@ -397,7 +448,9 @@
                                 availableStudies={studiesList}
                                 availableDiagnoses={diagnosesList}
                                 onRegisterStudy={registerNewStudy}
+                                onUnregisterStudy={unregisterStudy}
                                 onRegisterDiagnosis={registerNewDiagnosis}
+                                onUnregisterDiagnosis={unregisterDiagnosis}
                             />
                         )}
                         {activeTab === 'informes' && (
@@ -423,7 +476,7 @@
         // SUB-COMPONENTES
         // ==========================================
 
-        const EntryForm = ({ onSave, isSubmitting, initialData, onCancelEdit, availableStudies, availableDiagnoses, onRegisterStudy, onRegisterDiagnosis }) => {
+        const EntryForm = ({ onSave, isSubmitting, initialData, onCancelEdit, availableStudies, availableDiagnoses, onRegisterStudy, onUnregisterStudy, onRegisterDiagnosis, onUnregisterDiagnosis }) => {
             const [formData, setFormData] = useState({
                 date: new Date().toISOString().split('T')[0],
                 patientName: '',
@@ -488,7 +541,6 @@
             const addCustomDiagnosis = () => {
                 if (customDiag && !formData.diagnoses.includes(customDiag)) {
                     setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
-                    // Registrar globalmente para futuro
                     onRegisterDiagnosis(customDiag);
                     setCustomDiag('');
                 }
@@ -497,7 +549,6 @@
             const addCustomStudy = () => {
                 if (customStudy && !formData.studies.includes(customStudy)) {
                     setFormData(prev => ({ ...prev, studies: [...prev.studies, customStudy] }));
-                    // Registrar globalmente para futuro
                     onRegisterStudy(customStudy);
                     setCustomStudy('');
                 }
@@ -584,19 +635,35 @@
                     <div className="border-t pt-4">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Estudios Realizados</label>
                         <div className="flex flex-wrap gap-2 mb-3">
-                            {availableStudies.map(study => (
-                                <button
-                                    key={study} type="button" onClick={() => toggleStudy(study)}
-                                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                                        formData.studies.includes(study)
-                                            ? 'bg-medical-600 text-white shadow-md'
-                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                    }`}
-                                >
-                                    {study}
-                                </button>
-                            ))}
-                            {/* Renderizar estudios que ya estaban seleccionados pero quizás no están en la lista global (ej: datos viejos) */}
+                            {availableStudies.map(study => {
+                                const isDefault = ESTUDIOS_INICIALES.includes(study);
+                                return (
+                                    <div key={study} className="relative group inline-block">
+                                        <button
+                                            type="button" onClick={() => toggleStudy(study)}
+                                            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                                                formData.studies.includes(study)
+                                                    ? 'bg-medical-600 text-white shadow-md'
+                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {study}
+                                        </button>
+                                        {!isDefault && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); onUnregisterStudy(study); }}
+                                                className="absolute -top-1 -right-1 bg-red-400 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] shadow-sm opacity-60 hover:opacity-100"
+                                                title="Eliminar de la lista"
+                                            >
+                                                ×
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            
+                            {/* Renderizar estudios que ya estaban seleccionados pero quizás no están en la lista global */}
                             {formData.studies.filter(s => !availableStudies.includes(s)).map(study => (
                                  <button
                                     key={study} type="button" onClick={() => toggleStudy(study)}
@@ -626,7 +693,7 @@
 
                     <div className="border-t pt-4">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Diagnósticos</label>
-                        <div className="flex gap-2 mb-2">
+                        <div className="flex gap-2 mb-2 items-center">
                             <select 
                                 className="flex-1 p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none bg-white"
                                 onChange={handleDiagnosisChange}
@@ -650,6 +717,29 @@
                                 Agregar
                             </button>
                         </div>
+
+                         {/* Área de gestión de diagnósticos personalizados */}
+                        {availableDiagnoses.filter(d => !DIAGNOSTICOS_INICIALES.includes(d)).length > 0 && (
+                            <div className="mb-2 p-2 bg-slate-50 rounded border border-slate-200">
+                                <p className="text-xs text-slate-500 mb-1">Mis Diagnósticos Personalizados:</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {availableDiagnoses.filter(d => !DIAGNOSTICOS_INICIALES.includes(d)).map(d => (
+                                        <span key={d} className="bg-white px-2 py-1 rounded text-xs border border-slate-300 flex items-center gap-1 text-slate-600">
+                                            {d}
+                                            <button 
+                                                type="button"
+                                                onClick={() => onUnregisterDiagnosis(d)}
+                                                className="text-red-400 hover:text-red-600 font-bold ml-1"
+                                                title="Eliminar de la lista"
+                                            >
+                                                ×
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-slate-50 rounded border border-slate-200 border-dashed">
                             {formData.diagnoses.length === 0 && <span className="text-slate-400 text-sm italic">Sin diagnósticos seleccionados</span>}
                             {formData.diagnoses.map(diag => (
