@@ -51,18 +51,23 @@
             to { transform: translateX(0); opacity: 1; }
         }
         .toast-enter { animation: slideIn 0.3s ease-out forwards; }
+        
+        /* Scrollbar personalizada para el dropdown */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo } from 'react';
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
             Activity, Users, FileText, Save, Plus, Trash2, 
             Share2, Download, Search, AlertCircle, CheckCircle, X,
-            Calendar, Database, Settings, Edit, User, WifiOff
+            Calendar, Database, Settings, Edit, User, WifiOff, ChevronDown
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
@@ -93,21 +98,21 @@
                 const app = initializeApp(manualConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                console.log("Firebase inicializado correctamente con proyecto:", manualConfig.projectId);
+                console.log("Firebase inicializado correctamente.");
             } catch (e) {
                 console.error("Error al iniciar Firebase:", e);
             }
         }
 
-        // Listas iniciales por defecto (si no hay nada en memoria)
+        // Listas iniciales
         const ESTUDIOS_INICIALES = [
             "Cerebral", "Abdominal", "Renal", "Caderas", "Partes Blandas", "Doppler"
         ];
 
+        // ELIMINADO: "Hemorragia Intraventricular" como se solicitó
         const DIAGNOSTICOS_INICIALES = [
             "Normal", "Hidronefrosis", "Reflujo Vesicoureteral", 
-            "Displasia de Cadera", "Estenosis Hipertrófica del Píloro", 
-            "Hemorragia Intraventricular"
+            "Displasia de Cadera", "Estenosis Hipertrófica del Píloro"
         ];
 
         const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -148,9 +153,9 @@
 
         const ToastContainer = ({ toasts, removeToast }) => {
             return (
-                <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+                <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
                     {toasts.map(toast => (
-                        <div key={toast.id} className={`toast-enter flex items-center p-4 rounded shadow-lg text-white ${
+                        <div key={toast.id} className={`toast-enter flex items-center p-4 rounded shadow-lg text-white pointer-events-auto ${
                             toast.type === 'success' ? 'bg-medical-600' : 
                             toast.type === 'error' ? 'bg-red-500' : 'bg-blue-500'
                         }`}>
@@ -162,6 +167,111 @@
                             </button>
                         </div>
                     ))}
+                </div>
+            );
+        };
+
+        // Nuevo Componente: Menú desplegable con búsqueda y creación
+        const SearchableDropdown = ({ options, onSelect, onAddOption, onDeleteOption, placeholder, defaultOptions }) => {
+            const [isOpen, setIsOpen] = useState(false);
+            const [searchTerm, setSearchTerm] = useState("");
+            const wrapperRef = useRef(null);
+
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                        setIsOpen(false);
+                    }
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
+
+            const filteredOptions = options.filter(opt => 
+                opt.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            const handleSelect = (opt) => {
+                onSelect(opt);
+                setSearchTerm("");
+                setIsOpen(false);
+            };
+
+            const handleAdd = () => {
+                if (searchTerm.trim()) {
+                    onAddOption(searchTerm);
+                    onSelect(searchTerm);
+                    setSearchTerm("");
+                    setIsOpen(false);
+                }
+            };
+
+            return (
+                <div className="relative" ref={wrapperRef}>
+                    <div 
+                        className="flex items-center border rounded p-2 bg-white focus-within:ring-2 focus-within:ring-medical-500 cursor-text"
+                        onClick={() => setIsOpen(true)}
+                    >
+                        <Search size={16} className="text-slate-400 mr-2" />
+                        <input 
+                            type="text"
+                            className="flex-1 outline-none text-sm w-full"
+                            placeholder={placeholder}
+                            value={searchTerm}
+                            onChange={(e) => {
+                                setSearchTerm(e.target.value);
+                                setIsOpen(true);
+                            }}
+                            onFocus={() => setIsOpen(true)}
+                        />
+                        {searchTerm ? (
+                            <button onClick={(e) => { e.stopPropagation(); setSearchTerm(""); }} className="text-slate-400 hover:text-slate-600">
+                                <X size={16} />
+                            </button>
+                        ) : (
+                            <ChevronDown size={16} className="text-slate-400" />
+                        )}
+                    </div>
+
+                    {isOpen && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border rounded shadow-xl max-h-60 overflow-y-auto custom-scrollbar">
+                            {filteredOptions.map(opt => {
+                                const isDefault = defaultOptions.includes(opt);
+                                return (
+                                    <div key={opt} className="flex justify-between items-center p-2 hover:bg-slate-50 cursor-pointer group">
+                                        <span className="flex-1 text-sm text-slate-700" onClick={() => handleSelect(opt)}>
+                                            {opt}
+                                        </span>
+                                        {!isDefault && onDeleteOption && (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); onDeleteOption(opt); }}
+                                                className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                                title="Borrar de la lista"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            
+                            {filteredOptions.length === 0 && !searchTerm && (
+                                <div className="p-3 text-center text-xs text-slate-400 italic">
+                                    Escribe para buscar...
+                                </div>
+                            )}
+
+                            {searchTerm && !options.some(o => o.toLowerCase() === searchTerm.toLowerCase()) && (
+                                <div 
+                                    className="p-2 hover:bg-blue-50 cursor-pointer flex items-center gap-2 text-blue-600 font-medium text-sm border-t"
+                                    onClick={handleAdd}
+                                >
+                                    <Plus size={14} />
+                                    Crear "{searchTerm}"
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -243,11 +353,8 @@
                             // === ESCUCHAR CAMBIOS EN LA NUBE ===
                             const q = collection(db, "ecografias");
                             const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-                                // Obtener datos de la nube
                                 const cloudData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
                                 console.log("Datos sincronizados desde la nube:", cloudData.length);
-                                
-                                // Actualizar estado y localstorage con la verdad de la nube
                                 setRecords(cloudData);
                                 localStorage.setItem('eco_records', JSON.stringify(cloudData));
                             }, (error) => {
@@ -270,7 +377,6 @@
                 return () => window.removeEventListener('online', handleOnline);
             }, []);
 
-            // Funciones para registrar nuevos items globalmente
             const registerNewStudy = (newStudy) => {
                  if (!studiesList.includes(newStudy)) {
                      const updated = [...studiesList, newStudy];
@@ -306,7 +412,7 @@
             const addToast = (message, type = 'success') => {
                 const id = Date.now();
                 setToasts(prev => [...prev, { id, message, type }]);
-                setTimeout(() => removeToast(id), 3000);
+                setTimeout(() => removeToast(id), 2000); // ACTUALIZADO: 2 segundos
             };
 
             const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -316,7 +422,6 @@
                 try {
                     const newRecord = { ...recordData, id: recordData.id || generateId(), updatedAt: new Date().toISOString() };
                     
-                    // Actualización optimista local
                     let updatedRecords;
                     if (recordData.id) {
                         updatedRecords = records.map(r => r.id === recordData.id ? newRecord : r);
@@ -349,19 +454,17 @@
             const deleteRecord = async (id) => {
                 if(!confirm("¿Estás seguro de eliminar este registro?")) return;
                 
-                // 1. Borrado local optimista (para que desaparezca rápido)
                 const updatedRecords = records.filter(r => r.id !== id);
                 setRecords(updatedRecords);
                 localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
                 
-                // 2. Borrado en la nube
                 if (db && user && navigator.onLine) {
                     try {
                         await deleteDoc(doc(db, "ecografias", id));
                         addToast("Registro eliminado de la nube");
                     } catch(e) {
                         console.error("Error borrando en nube", e);
-                        addToast("Error al borrar en nube, se borrará localmente", "warning");
+                        addToast("Error al borrar en nube", "warning");
                     }
                 } else {
                     addToast("Registro borrado localmente (offline)");
@@ -487,7 +590,6 @@
                 diagnoses: [],
                 notes: ''
             });
-            const [customDiag, setCustomDiag] = useState('');
             const [customStudy, setCustomStudy] = useState('');
 
             useEffect(() => {
@@ -510,7 +612,6 @@
                     diagnoses: [],
                     notes: ''
                 });
-                setCustomDiag('');
                 setCustomStudy('');
             };
 
@@ -530,19 +631,9 @@
                 }));
             };
 
-            const handleDiagnosisChange = (e) => {
-                const val = e.target.value;
-                if (val && !formData.diagnoses.includes(val)) {
-                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, val] }));
-                }
-                e.target.value = ""; 
-            };
-
-            const addCustomDiagnosis = () => {
-                if (customDiag && !formData.diagnoses.includes(customDiag)) {
-                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
-                    onRegisterDiagnosis(customDiag);
-                    setCustomDiag('');
+            const addDiagnosis = (diag) => {
+                if (diag && !formData.diagnoses.includes(diag)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, diag] }));
                 }
             };
             
@@ -663,7 +754,6 @@
                                 );
                             })}
                             
-                            {/* Renderizar estudios que ya estaban seleccionados pero quizás no están en la lista global */}
                             {formData.studies.filter(s => !availableStudies.includes(s)).map(study => (
                                  <button
                                     key={study} type="button" onClick={() => toggleStudy(study)}
@@ -693,54 +783,16 @@
 
                     <div className="border-t pt-4">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Diagnósticos</label>
-                        <div className="flex gap-2 mb-2 items-center">
-                            <select 
-                                className="flex-1 p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none bg-white"
-                                onChange={handleDiagnosisChange}
-                            >
-                                <option value="">Seleccione Diagnóstico...</option>
-                                {availableDiagnoses.map(d => <option key={d} value={d}>{d}</option>)}
-                            </select>
-                        </div>
-                        <div className="flex gap-2 mb-2">
-                            <input 
-                                type="text" placeholder="Otro diagnóstico..." 
-                                className="flex-1 p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
-                                value={customDiag}
-                                onChange={e => setCustomDiag(e.target.value)}
-                                onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addCustomDiagnosis())}
-                            />
-                            <button 
-                                type="button" onClick={addCustomDiagnosis}
-                                className="bg-slate-200 px-4 rounded text-slate-700 hover:bg-slate-300"
-                            >
-                                Agregar
-                            </button>
-                        </div>
+                        <SearchableDropdown 
+                            options={availableDiagnoses}
+                            defaultOptions={DIAGNOSTICOS_INICIALES}
+                            placeholder="Seleccione o escriba un diagnóstico..."
+                            onSelect={addDiagnosis}
+                            onAddOption={onRegisterDiagnosis}
+                            onDeleteOption={onUnregisterDiagnosis}
+                        />
 
-                         {/* Área de gestión de diagnósticos personalizados */}
-                        {availableDiagnoses.filter(d => !DIAGNOSTICOS_INICIALES.includes(d)).length > 0 && (
-                            <div className="mb-2 p-2 bg-slate-50 rounded border border-slate-200">
-                                <p className="text-xs text-slate-500 mb-1">Mis Diagnósticos Personalizados:</p>
-                                <div className="flex flex-wrap gap-2">
-                                    {availableDiagnoses.filter(d => !DIAGNOSTICOS_INICIALES.includes(d)).map(d => (
-                                        <span key={d} className="bg-white px-2 py-1 rounded text-xs border border-slate-300 flex items-center gap-1 text-slate-600">
-                                            {d}
-                                            <button 
-                                                type="button"
-                                                onClick={() => onUnregisterDiagnosis(d)}
-                                                className="text-red-400 hover:text-red-600 font-bold ml-1"
-                                                title="Eliminar de la lista"
-                                            >
-                                                ×
-                                            </button>
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-slate-50 rounded border border-slate-200 border-dashed">
+                        <div className="flex flex-wrap gap-2 min-h-[40px] p-2 mt-2 bg-slate-50 rounded border border-slate-200 border-dashed">
                             {formData.diagnoses.length === 0 && <span className="text-slate-400 text-sm italic">Sin diagnósticos seleccionados</span>}
                             {formData.diagnoses.map(diag => (
                                 <span key={diag} className="bg-amber-100 text-amber-800 px-2 py-1 rounded-md text-sm flex items-center gap-1">
