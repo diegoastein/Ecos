@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ecografías Pediátricas</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        medical: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6', // Teal 500
+                            600: '#0d9488', // Teal 600
+                            700: '#0f766e', // Teal 700
+                            900: '#134e4a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Import Map para React y Firebase -->
+    <script type="importmap">
+        {
+            "imports": {
+                "react": "https://esm.sh/react@18.2.0",
+                "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+                "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+                "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js",
+                "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"
+            }
+        }
+    </script>
+    
+    <!-- Babel para JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { background-color: #f8fafc; }
+        /* Animación para Toasts */
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .toast-enter { animation: slideIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            Activity, Users, FileText, Save, Plus, Trash2, 
+            Share2, Download, Search, AlertCircle, CheckCircle, X,
+            Calendar, Database, Settings, Edit, User, WifiOff
+        } from 'lucide-react';
+        import { initializeApp } from 'firebase/app';
+        import { getFirestore, collection, addDoc, doc, setDoc, getDocs, query, where } from 'firebase/firestore';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+
+        // ==========================================
+        // CONFIGURACIÓN (Area para el desarrollador)
+        // ==========================================
+      const firebaseConfig = {
+  apiKey: "AIzaSyD3R75GOUsBoMHjWAEgaDKIpXr89wMV1f8",
+  authDomain: "ecografias-cede4.firebaseapp.com",
+  projectId: "ecografias-cede4",
+  storageBucket: "ecografias-cede4.firebasestorage.app",
+  messagingSenderId: "523301799564",
+  appId: "1:523301799564:web:81137e060bcfd62a5a9da9"
+};
+
+        // ==========================================
+        // UTILIDADES Y LÓGICA DE NEGOCIO
+        // ==========================================
+        
+        // Inicialización segura de Firebase
+        let db = null;
+        let auth = null;
+        // Validación básica: que no sea el placeholder y que tenga una longitud mínima razonable
+        const isConfigured = manualConfig.apiKey !== "TU_API_KEY_AQUI" && manualConfig.apiKey !== "no tengo" && manualConfig.apiKey.length > 10;
+        
+        if (isConfigured) {
+            try {
+                const app = initializeApp(manualConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                console.log("Firebase inicializado correctamente.");
+            } catch (e) {
+                console.error("Error al iniciar Firebase:", e);
+            }
+        }
+
+        const ESTUDIOS_DEFECTO = [
+            "Cerebral", "Abdominal", "Renal", "Caderas", "Partes Blandas", "Doppler"
+        ];
+
+        const DIAGNOSTICOS_COMUNES = [
+            "Normal", "Hidronefrosis", "Reflujo Vesicoureteral", 
+            "Displasia de Cadera", "Estenosis Hipertrófica del Píloro", 
+            "Hemorragia Intraventricular"
+        ];
+
+        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+        
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '';
+            const [y, m, d] = dateStr.split('-');
+            return `${d}/${m}/${y}`;
+        };
+
+        const safeCopy = (text, onSuccess, onError) => {
+            try {
+                navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    textArea.style.position = "fixed"; 
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        const successful = document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        if (successful) onSuccess();
+                        else onError();
+                    } catch (err) {
+                        document.body.removeChild(textArea);
+                        onError();
+                    }
+                });
+            } catch (e) {
+                onError();
+            }
+        };
+
+        // ==========================================
+        // COMPONENTES UI
+        // ==========================================
+
+        const ToastContainer = ({ toasts, removeToast }) => {
+            return (
+                <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+                    {toasts.map(toast => (
+                        <div key={toast.id} className={`toast-enter flex items-center p-4 rounded shadow-lg text-white ${
+                            toast.type === 'success' ? 'bg-medical-600' : 
+                            toast.type === 'error' ? 'bg-red-500' : 'bg-blue-500'
+                        }`}>
+                            {toast.type === 'success' && <CheckCircle size={20} className="mr-2" />}
+                            {toast.type === 'error' && <AlertCircle size={20} className="mr-2" />}
+                            <span>{toast.message}</span>
+                            <button onClick={() => removeToast(toast.id)} className="ml-4 hover:text-gray-200">
+                                <X size={16} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        const SetupScreen = ({ onContinueOffline }) => (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
+                <div className="bg-white p-8 rounded-lg shadow-xl max-w-md w-full text-center">
+                    <div className="flex justify-center mb-4 text-amber-500">
+                        <Settings size={64} />
+                    </div>
+                    <h1 className="text-2xl font-bold text-slate-800 mb-2">Configuración Requerida</h1>
+                    <p className="text-slate-600 mb-4">
+                        Para sincronizar en la nube, necesitas configurar Firebase en el código.
+                    </p>
+                    
+                    <div className="bg-slate-50 p-3 rounded text-left text-xs font-mono mb-4 border border-slate-200 text-slate-500">
+                        const manualConfig = &#123;<br/>
+                        &nbsp;&nbsp;apiKey: "TU_API_KEY",<br/>
+                        &nbsp;&nbsp;...<br/>
+                        &#125;
+                    </div>
+
+                    <div className="space-y-3">
+                         <button 
+                            onClick={onContinueOffline}
+                            className="w-full py-2 px-4 bg-slate-600 hover:bg-slate-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                        >
+                            <WifiOff size={18} />
+                            Continuar en Modo Offline
+                        </button>
+                        <p className="text-xs text-slate-400">
+                            Podrás guardar pacientes localmente, pero no se subirán a la nube.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+
+        // ==========================================
+        // APP PRINCIPAL
+        // ==========================================
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('ingreso');
+            const [records, setRecords] = useState([]);
+            const [toasts, setToasts] = useState([]);
+            const [pendingSyncs, setPendingSyncs] = useState([]);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+            const [editingRecord, setEditingRecord] = useState(null);
+            const [user, setUser] = useState(null);
+            const [authLoading, setAuthLoading] = useState(isConfigured); // Solo carga si está configurado
+            const [bypassSetup, setBypassSetup] = useState(false); // Estado para saltar setup
+
+            useEffect(() => {
+                // 1. Cargar datos locales
+                const savedRecords = localStorage.getItem('eco_records');
+                const savedQueue = localStorage.getItem('eco_sync_queue');
+                if (savedRecords) setRecords(JSON.parse(savedRecords));
+                if (savedQueue) setPendingSyncs(JSON.parse(savedQueue));
+
+                // 2. Manejar Autenticación Anónima
+                if (isConfigured && auth) {
+                    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                        setUser(currentUser);
+                        setAuthLoading(false);
+                        if (currentUser) {
+                            console.log("Usuario autenticado:", currentUser.uid);
+                            if (navigator.onLine) syncQueue();
+                        } else {
+                            // Si no hay usuario, intentar loguear anónimamente
+                            signInAnonymously(auth).catch(err => {
+                                console.error("Error Auth Anónimo:", err);
+                                setAuthLoading(false);
+                            });
+                        }
+                    });
+                    return () => unsubscribe();
+                }
+
+                // Listener de conexión
+                const handleOnline = () => {
+                    if (user) syncQueue();
+                };
+                window.addEventListener('online', handleOnline);
+                return () => window.removeEventListener('online', handleOnline);
+            }, [user]); // Dependencia user añadida
+
+            const addToast = (message, type = 'success') => {
+                const id = Date.now();
+                setToasts(prev => [...prev, { id, message, type }]);
+                setTimeout(() => removeToast(id), 3000);
+            };
+
+            const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
+
+            const saveRecord = async (recordData) => {
+                setIsSubmitting(true);
+                try {
+                    const newRecord = { ...recordData, id: recordData.id || generateId(), updatedAt: new Date().toISOString() };
+                    
+                    let updatedRecords;
+                    if (recordData.id) {
+                        updatedRecords = records.map(r => r.id === recordData.id ? newRecord : r);
+                    } else {
+                        updatedRecords = [newRecord, ...records];
+                    }
+
+                    setRecords(updatedRecords);
+                    localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
+
+                    if (isConfigured) {
+                        const newQueue = [...pendingSyncs, newRecord];
+                        setPendingSyncs(newQueue);
+                        localStorage.setItem('eco_sync_queue', JSON.stringify(newQueue));
+                        if (user) syncQueue(newQueue); 
+                    }
+
+                    addToast(recordData.id ? "Registro actualizado" : "Registro guardado");
+                    setEditingRecord(null); 
+                    return true;
+                } catch (error) {
+                    console.error(error);
+                    addToast("Error al guardar localmente", "error");
+                    return false;
+                } finally {
+                    setIsSubmitting(false);
+                }
+            };
+
+            const deleteRecord = (id) => {
+                if(!confirm("¿Estás seguro de eliminar este registro?")) return;
+                const updatedRecords = records.filter(r => r.id !== id);
+                setRecords(updatedRecords);
+                localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
+                addToast("Registro eliminado");
+                // TODO: Agregar a cola de eliminación para sync
+            };
+
+            const handleEdit = (record) => {
+                setEditingRecord(record);
+                setActiveTab('ingreso');
+            };
+
+            const syncQueue = async (currentQueue = pendingSyncs) => {
+                if (!db || !user || currentQueue.length === 0 || !navigator.onLine) return;
+                
+                const queueCopy = [...currentQueue];
+                const failedSyncs = [];
+                for (const item of queueCopy) {
+                    try {
+                        await setDoc(doc(db, "ecografias", item.id), item, { merge: true });
+                    } catch (e) {
+                        console.error("Error Sync:", e);
+                        failedSyncs.push(item);
+                    }
+                }
+                setPendingSyncs(failedSyncs);
+                localStorage.setItem('eco_sync_queue', JSON.stringify(failedSyncs));
+            };
+
+            // Mostrar SetupScreen si no está configurado Y no se ha saltado
+            if (!isConfigured && !bypassSetup) {
+                return <SetupScreen onContinueOffline={() => setBypassSetup(true)} />;
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col max-w-5xl mx-auto bg-slate-50 shadow-2xl border-x border-slate-200">
+                    <ToastContainer toasts={toasts} removeToast={removeToast} />
+
+                    <header className="bg-medical-600 text-white p-4 shadow-md">
+                        <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <Activity className="h-6 w-6" />
+                                <h1 className="text-xl font-bold">Ecografías Pediátricas</h1>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                {/* Indicador de Auth */}
+                                <div className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${user ? 'bg-medical-700 text-white' : 'bg-slate-500 text-slate-200'}`}>
+                                    <User size={12} />
+                                    {authLoading ? 'Conectando...' : (user ? 'Anónimo' : 'Offline')}
+                                </div>
+                                {/* Indicador de Sync */}
+                                <div className="text-xs bg-medical-700 px-2 py-1 rounded flex items-center gap-1">
+                                    <Database size={12} />
+                                    {pendingSyncs.length > 0 ? 'Sincronizando...' : 'Sincronizado'}
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <nav className="flex border-b bg-white sticky top-0 z-10">
+                        <button 
+                            onClick={() => setActiveTab('ingreso')}
+                            className={`flex-1 py-4 text-sm font-medium flex justify-center items-center gap-2 border-b-2 transition-colors ${activeTab === 'ingreso' ? 'border-medical-600 text-medical-600 bg-medical-50' : 'border-transparent text-slate-500 hover:text-medical-600'}`}
+                        >
+                            <Plus size={18} /> {editingRecord ? 'Editando...' : 'Ingreso'}
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('informes')}
+                            className={`flex-1 py-4 text-sm font-medium flex justify-center items-center gap-2 border-b-2 transition-colors ${activeTab === 'informes' ? 'border-medical-600 text-medical-600 bg-medical-50' : 'border-transparent text-slate-500 hover:text-medical-600'}`}
+                        >
+                            <FileText size={18} /> Informes
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('estadisticas')}
+                            className={`flex-1 py-4 text-sm font-medium flex justify-center items-center gap-2 border-b-2 transition-colors ${activeTab === 'estadisticas' ? 'border-medical-600 text-medical-600 bg-medical-50' : 'border-transparent text-slate-500 hover:text-medical-600'}`}
+                        >
+                            <Activity size={18} /> Estadísticas
+                        </button>
+                    </nav>
+
+                    <main className="flex-1 p-4 overflow-y-auto">
+                        {activeTab === 'ingreso' && (
+                            <EntryForm 
+                                onSave={saveRecord} 
+                                isSubmitting={isSubmitting} 
+                                initialData={editingRecord}
+                                onCancelEdit={() => setEditingRecord(null)}
+                            />
+                        )}
+                        {activeTab === 'informes' && (
+                            <ReportsView 
+                                records={records} 
+                                onEdit={handleEdit} 
+                                onDelete={deleteRecord} 
+                                addToast={addToast} 
+                            />
+                        )}
+                        {activeTab === 'estadisticas' && (
+                            <StatsView 
+                                records={records} 
+                                addToast={addToast} 
+                            />
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        // ==========================================
+        // SUB-COMPONENTES
+        // ==========================================
+
+        const EntryForm = ({ onSave, isSubmitting, initialData, onCancelEdit }) => {
+            const [formData, setFormData] = useState({
+                date: new Date().toISOString().split('T')[0],
+                patientName: '',
+                age: '',
+                ageUnit: 'años',
+                type: 'Ambulatorio',
+                studies: [],
+                diagnoses: [],
+                notes: ''
+            });
+            const [customDiag, setCustomDiag] = useState('');
+            const [customStudy, setCustomStudy] = useState('');
+
+            // Cargar datos si estamos editando
+            useEffect(() => {
+                if (initialData) {
+                    // Adaptador para soportar registros viejos con firstName/lastName
+                    const patientName = initialData.patientName || `${initialData.firstName} ${initialData.lastName}`.trim();
+                    setFormData({ ...initialData, patientName });
+                } else {
+                    resetForm();
+                }
+            }, [initialData]);
+
+            const resetForm = () => {
+                setFormData({
+                    date: new Date().toISOString().split('T')[0],
+                    patientName: '',
+                    age: '',
+                    ageUnit: 'años',
+                    type: 'Ambulatorio',
+                    studies: [],
+                    diagnoses: [],
+                    notes: ''
+                });
+                setCustomDiag('');
+                setCustomStudy('');
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!formData.patientName || !formData.age) return;
+                const success = await onSave(formData);
+                if (success && !initialData) resetForm(); 
+            };
+
+            const toggleStudy = (study) => {
+                setFormData(prev => ({
+                    ...prev,
+                    studies: prev.studies.includes(study) 
+                        ? prev.studies.filter(s => s !== study)
+                        : [...prev.studies, study]
+                }));
+            };
+
+            const handleDiagnosisChange = (e) => {
+                const val = e.target.value;
+                if (val && !formData.diagnoses.includes(val)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, val] }));
+                }
+                e.target.value = ""; 
+            };
+
+            const addCustomDiagnosis = () => {
+                if (customDiag && !formData.diagnoses.includes(customDiag)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
+                    setCustomDiag('');
+                }
+            };
+            
+            const addCustomStudy = () => {
+                if (customStudy && !formData.studies.includes(customStudy)) {
+                    setFormData(prev => ({ ...prev, studies: [...prev.studies, customStudy] }));
+                    setCustomStudy('');
+                }
+            };
+
+            const removeDiagnosis = (diag) => {
+                setFormData(prev => ({ ...prev, diagnoses: prev.diagnoses.filter(d => d !== diag) }));
+            };
+
+            return (
+                <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-sm space-y-6 relative">
+                    {initialData && (
+                        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 flex justify-between items-center">
+                            <div>
+                                <p className="font-bold text-blue-700">Modo Edición</p>
+                                <p className="text-sm text-blue-600">Editando registro del {formatDate(initialData.date)}</p>
+                            </div>
+                            <button type="button" onClick={onCancelEdit} className="text-sm bg-white px-3 py-1 rounded shadow text-slate-600 hover:text-slate-800">
+                                Cancelar
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Fecha</label>
+                            <input 
+                                type="date" required
+                                className="w-full p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
+                                value={formData.date}
+                                onChange={e => setFormData({...formData, date: e.target.value})}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Nombre y Apellido</label>
+                            <input 
+                                type="text" required placeholder="Juan Pérez"
+                                className="w-full p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
+                                value={formData.patientName}
+                                onChange={e => setFormData({...formData, patientName: e.target.value})}
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <div className="flex-1">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Edad</label>
+                                <input 
+                                    type="number" required placeholder="0"
+                                    className="w-full p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
+                                    value={formData.age}
+                                    onChange={e => setFormData({...formData, age: e.target.value})}
+                                />
+                            </div>
+                            <div className="w-1/3">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Unidad</label>
+                                <select 
+                                    className="w-full p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none bg-white"
+                                    value={formData.ageUnit}
+                                    onChange={e => setFormData({...formData, ageUnit: e.target.value})}
+                                >
+                                    <option>años</option>
+                                    <option>meses</option>
+                                    <option>días</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Paciente</label>
+                            <div className="flex gap-4 mt-2">
+                                {['Ambulatorio', 'Internado'].map(type => (
+                                    <label key={type} className="flex items-center cursor-pointer">
+                                        <input 
+                                            type="radio" name="patientType"
+                                            className="w-4 h-4 text-medical-600 focus:ring-medical-500"
+                                            checked={formData.type === type}
+                                            onChange={() => setFormData({...formData, type})}
+                                        />
+                                        <span className="ml-2 text-slate-700">{type}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="border-t pt-4">
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Estudios Realizados</label>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            {ESTUDIOS_DEFECTO.map(study => (
+                                <button
+                                    key={study} type="button" onClick={() => toggleStudy(study)}
+                                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                                        formData.studies.includes(study)
+                                            ? 'bg-medical-600 text-white shadow-md'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    {study}
+                                </button>
+                            ))}
+                            {formData.studies.filter(s => !ESTUDIOS_DEFECTO.includes(s)).map(study => (
+                                 <button
+                                    key={study} type="button" onClick={() => toggleStudy(study)}
+                                    className="px-3 py-1.5 rounded-full text-sm font-medium bg-medical-600 text-white shadow-md"
+                                >
+                                    {study}
+                                </button>
+                            ))}
+                        </div>
+                        
+                         <div className="flex gap-2 max-w-sm">
+                            <input 
+                                type="text" placeholder="Otro estudio..." 
+                                className="flex-1 p-2 py-1 text-sm border rounded focus:ring-1 focus:ring-medical-500 outline-none"
+                                value={customStudy}
+                                onChange={e => setCustomStudy(e.target.value)}
+                                onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addCustomStudy())}
+                            />
+                            <button 
+                                type="button" onClick={addCustomStudy}
+                                className="bg-slate-200 px-3 py-1 rounded text-sm text-slate-700 hover:bg-slate-300"
+                            >
+                                <Plus size={16}/>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="border-t pt-4">
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Diagnósticos</label>
+                        <div className="flex gap-2 mb-2">
+                            <select 
+                                className="flex-1 p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none bg-white"
+                                onChange={handleDiagnosisChange}
+                            >
+                                <option value="">Seleccione Diagnóstico...</option>
+                                {DIAGNOSTICOS_COMUNES.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex gap-2 mb-2">
+                            <input 
+                                type="text" placeholder="Otro diagnóstico..." 
+                                className="flex-1 p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
+                                value={customDiag}
+                                onChange={e => setCustomDiag(e.target.value)}
+                                onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addCustomDiagnosis())}
+                            />
+                            <button 
+                                type="button" onClick={addCustomDiagnosis}
+                                className="bg-slate-200 px-4 rounded text-slate-700 hover:bg-slate-300"
+                            >
+                                Agregar
+                            </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-slate-50 rounded border border-slate-200 border-dashed">
+                            {formData.diagnoses.length === 0 && <span className="text-slate-400 text-sm italic">Sin diagnósticos seleccionados</span>}
+                            {formData.diagnoses.map(diag => (
+                                <span key={diag} className="bg-amber-100 text-amber-800 px-2 py-1 rounded-md text-sm flex items-center gap-1">
+                                    {diag}
+                                    <button type="button" onClick={() => removeDiagnosis(diag)} className="hover:text-amber-900"><X size={14}/></button>
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="border-t pt-4">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Notas Adicionales</label>
+                        <textarea 
+                            rows="3"
+                            className="w-full p-2 border rounded focus:ring-2 focus:ring-medical-500 outline-none"
+                            value={formData.notes}
+                            onChange={e => setFormData({...formData, notes: e.target.value})}
+                        ></textarea>
+                    </div>
+
+                    <button 
+                        type="submit" disabled={isSubmitting}
+                        className={`w-full py-3 rounded-lg font-bold text-white flex justify-center items-center gap-2 shadow-lg ${
+                            isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-medical-600 hover:bg-medical-700'
+                        }`}
+                    >
+                        {isSubmitting ? <Activity className="animate-spin" /> : <Save />}
+                        {isSubmitting ? 'Guardando...' : (initialData ? 'Actualizar Ecografía' : 'Guardar Ecografía')}
+                    </button>
+                </form>
+            );
+        };
+
+        const ReportsView = ({ records, onEdit, onDelete, addToast }) => {
+            const [filterName, setFilterName] = useState('');
+            const [dateFrom, setDateFrom] = useState('');
+            const [dateTo, setDateTo] = useState('');
+
+            const filteredRecords = useMemo(() => {
+                if (!filterName && !dateFrom && !dateTo) return [];
+
+                return records.filter(r => {
+                    const rName = r.patientName || `${r.firstName} ${r.lastName}`;
+                    const matchesName = rName.toLowerCase().includes(filterName.toLowerCase());
+                    const matchesDateFrom = !dateFrom || r.date >= dateFrom;
+                    const matchesDateTo = !dateTo || r.date <= dateTo;
+                    return matchesName && matchesDateFrom && matchesDateTo;
+                }).sort((a,b) => new Date(b.date) - new Date(a.date));
+            }, [records, filterName, dateFrom, dateTo]);
+
+            const handleShare = async (record) => {
+                const rName = record.patientName || `${record.firstName} ${record.lastName}`;
+                const text = `ECOGRAFÍA PEDIÁTRICA\nFecha: ${formatDate(record.date)}\nPaciente: ${rName} (${record.age} ${record.ageUnit})\nTipo: ${record.type}\nEstudios: ${record.studies.join(', ')}\nDiagnósticos: ${record.diagnoses.join(', ')}\nNotas: ${record.notes}`;
+                safeCopy(text, () => addToast("Copiado al portapapeles"), () => addToast("Error al copiar", "error"));
+            };
+
+            const downloadCSV = () => {
+                if (filteredRecords.length === 0) return;
+                const headers = ["Fecha", "Nombre y Apellido", "Edad", "Tipo", "Estudios", "Diagnósticos", "Notas"];
+                const rows = filteredRecords.map(r => {
+                    const rName = r.patientName || `${r.firstName} ${r.lastName}`;
+                    return [
+                        r.date, rName, `${r.age} ${r.ageUnit}`, r.type, 
+                        `"${r.studies.join(', ')}"`, `"${r.diagnoses.join(', ')}"`, `"${r.notes}"`
+                    ];
+                });
+                
+                const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
+                    + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+                
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", `ecografias_${new Date().toISOString().slice(0,10)}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const showEmptyState = !filterName && !dateFrom && !dateTo;
+
+            return (
+                <div className="space-y-4">
+                    <div className="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                        <div className="md:col-span-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Buscar Paciente</label>
+                            <div className="relative">
+                                <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Nombre o Apellido..." 
+                                    className="w-full pl-10 p-2 border rounded focus:ring-1 focus:ring-medical-500 outline-none"
+                                    value={filterName}
+                                    onChange={e => setFilterName(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Desde</label>
+                            <input 
+                                type="date" className="w-full p-2 border rounded text-sm"
+                                value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase">Hasta</label>
+                                <input 
+                                    type="date" className="w-full p-2 border rounded text-sm"
+                                    value={dateTo} onChange={e => setDateTo(e.target.value)}
+                                />
+                            </div>
+                            <button 
+                                onClick={downloadCSV}
+                                disabled={filteredRecords.length === 0}
+                                title="Exportar CSV"
+                                className={`h-[38px] w-[38px] flex items-center justify-center rounded text-white ${filteredRecords.length > 0 ? 'bg-green-600 hover:bg-green-700' : 'bg-slate-300'}`}
+                            >
+                                <Download size={18} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm overflow-hidden min-h-[300px]">
+                        {showEmptyState ? (
+                            <div className="p-12 text-center text-slate-400">
+                                <Search className="mx-auto mb-2 opacity-50" size={48} />
+                                <p>Ingrese parámetros de búsqueda para ver resultados</p>
+                            </div>
+                        ) : filteredRecords.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">
+                                <p>No se encontraron registros con esos filtros</p>
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs border-b">
+                                        <tr>
+                                            <th className="p-4">Fecha</th>
+                                            <th className="p-4">Paciente</th>
+                                            <th className="p-4">Estudios</th>
+                                            <th className="p-4">Diagnósticos</th>
+                                            <th className="p-4 text-right">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {filteredRecords.map(record => {
+                                             const rName = record.patientName || `${record.firstName} ${record.lastName}`;
+                                             return (
+                                                <tr key={record.id} className="hover:bg-slate-50">
+                                                    <td className="p-4 whitespace-nowrap text-slate-500">{formatDate(record.date)}</td>
+                                                    <td className="p-4">
+                                                        <div className="font-bold text-slate-800">{rName}</div>
+                                                        <div className="text-xs text-slate-500">{record.age} {record.ageUnit} • <span className={record.type === 'Internado' ? 'text-red-500 font-bold' : 'text-blue-500'}>{record.type}</span></div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {record.studies.map(s => (
+                                                                <span key={s} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs border border-slate-200">{s}</span>
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {record.diagnoses.map(d => (
+                                                                <span key={d} className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-xs border border-amber-100">{d}</span>
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 text-right whitespace-nowrap">
+                                                        <button onClick={() => onEdit(record)} className="p-2 text-slate-400 hover:text-blue-600 transition-colors" title="Editar"><Edit size={16}/></button>
+                                                        <button onClick={() => handleShare(record)} className="p-2 text-slate-400 hover:text-medical-600 transition-colors" title="Compartir"><Share2 size={16}/></button>
+                                                        <button onClick={() => onDelete(record.id)} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Borrar"><Trash2 size={16}/></button>
+                                                    </td>
+                                                </tr>
+                                             );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const StatsView = ({ records, addToast }) => {
+            const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+
+            const stats = useMemo(() => {
+                const filtered = records.filter(r => r.date.startsWith(selectedMonth));
+                const total = filtered.length;
+                const uniquePatients = new Set(filtered.map(r => (r.patientName || r.firstName + r.lastName) + r.age)).size;
+                const ambulatorio = filtered.filter(r => r.type === 'Ambulatorio').length;
+                const internado = filtered.filter(r => r.type === 'Internado').length;
+
+                const studyCounts = {};
+                filtered.forEach(r => r.studies.forEach(s => studyCounts[s] = (studyCounts[s] || 0) + 1));
+                const topStudy = Object.entries(studyCounts).sort((a,b) => b[1] - a[1])[0];
+
+                return { total, uniquePatients, ambulatorio, internado, topStudy };
+            }, [records, selectedMonth]);
+
+            const copyStats = async () => {
+                const text = `RESUMEN ESTADÍSTICO - ${selectedMonth}\n\nTotal Ecografías: ${stats.total}\n------------------\nAmbulatorio: ${stats.ambulatorio}\nInternado: ${stats.internado}\n\nPacientes Únicos: ${stats.uniquePatients}\nEstudio Top: ${stats.topStudy ? `${stats.topStudy[0]} (${stats.topStudy[1]})` : 'N/A'}`;
+                safeCopy(text, () => addToast("Resumen copiado al portapapeles"), () => addToast("Error al copiar", "error"));
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
+                        <div className="flex items-center gap-4">
+                            <label className="font-bold text-slate-600">Periodo:</label>
+                            <input 
+                                type="month" className="p-2 border rounded focus:ring-medical-500"
+                                value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                            />
+                        </div>
+                        <button 
+                            onClick={copyStats}
+                            className="flex items-center gap-2 text-medical-600 hover:text-medical-800 font-medium"
+                        >
+                            <Share2 size={18} /> Copiar Resumen
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-medical-500">
+                            <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <p className="text-slate-500 text-sm font-bold uppercase">Total Ecografías</p>
+                                    <h2 className="text-4xl font-bold text-slate-800 mt-2">{stats.total}</h2>
+                                </div>
+                                <div className="p-3 bg-medical-50 rounded-full text-medical-600">
+                                    <Activity size={24} />
+                                </div>
+                            </div>
+                            <div className="pt-4 border-t border-slate-100 flex justify-between text-sm">
+                                <span className="text-blue-600 font-medium">Ambulatorio: {stats.ambulatorio}</span>
+                                <span className="text-red-500 font-medium">Internado: {stats.internado}</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-cyan-500">
+                             <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <p className="text-slate-500 text-sm font-bold uppercase">Pacientes Únicos</p>
+                                    <h2 className="text-4xl font-bold text-slate-800 mt-2">{stats.uniquePatients}</h2>
+                                </div>
+                                <div className="p-3 bg-cyan-50 rounded-full text-cyan-600">
+                                    <Users size={24} />
+                                </div>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-2">Atendidos en este mes</p>
+                        </div>
+
+                         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-amber-500">
+                             <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <p className="text-slate-500 text-sm font-bold uppercase">Estudio Frecuente</p>
+                                    <h2 className="text-xl font-bold text-slate-800 mt-2 truncate max-w-[150px]" title={stats.topStudy ? stats.topStudy[0] : ''}>
+                                        {stats.topStudy ? stats.topStudy[0] : '-'}
+                                    </h2>
+                                </div>
+                                <div className="p-3 bg-amber-50 rounded-full text-amber-600">
+                                    <FileText size={24} />
+                                </div>
+                            </div>
+                            <p className="text-sm text-slate-500">
+                                Realizado <span className="font-bold text-slate-800">{stats.topStudy ? stats.topStudy[1] : 0}</span> veces
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
