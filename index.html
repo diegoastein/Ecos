@@ -71,7 +71,6 @@
         // ==========================================
         // CONFIGURACIÓN (CORREGIDA)
         // ==========================================
-        // IMPORTANTE: He renombrado la variable a 'manualConfig' para que coincida con la lógica
         const manualConfig = {
             apiKey: "AIzaSyD3R75GOUsBoMHjWAEgaDKIpXr89wMV1f8",
             authDomain: "ecografias-cede4.firebaseapp.com",
@@ -85,10 +84,8 @@
         // UTILIDADES Y LÓGICA DE NEGOCIO
         // ==========================================
         
-        // Inicialización segura de Firebase
         let db = null;
         let auth = null;
-        // Validación básica
         const isConfigured = manualConfig.apiKey && manualConfig.apiKey !== "TU_API_KEY_AQUI" && manualConfig.apiKey !== "no tengo" && manualConfig.apiKey.length > 10;
         
         if (isConfigured) {
@@ -102,11 +99,12 @@
             }
         }
 
-        const ESTUDIOS_DEFECTO = [
+        // Listas iniciales por defecto (si no hay nada en memoria)
+        const ESTUDIOS_INICIALES = [
             "Cerebral", "Abdominal", "Renal", "Caderas", "Partes Blandas", "Doppler"
         ];
 
-        const DIAGNOSTICOS_COMUNES = [
+        const DIAGNOSTICOS_INICIALES = [
             "Normal", "Hidronefrosis", "Reflujo Vesicoureteral", 
             "Displasia de Cadera", "Estenosis Hipertrófica del Píloro", 
             "Hemorragia Intraventricular"
@@ -214,42 +212,60 @@
             const [isSubmitting, setIsSubmitting] = useState(false);
             const [editingRecord, setEditingRecord] = useState(null);
             const [user, setUser] = useState(null);
-            const [authLoading, setAuthLoading] = useState(isConfigured); // Solo carga si está configurado
-            const [bypassSetup, setBypassSetup] = useState(false); // Estado para saltar setup
+            const [authLoading, setAuthLoading] = useState(isConfigured);
+            const [bypassSetup, setBypassSetup] = useState(false);
+            
+            // Estados para listas dinámicas (Estudios y Diagnósticos)
+            const [studiesList, setStudiesList] = useState(ESTUDIOS_INICIALES);
+            const [diagnosesList, setDiagnosesList] = useState(DIAGNOSTICOS_INICIALES);
 
             useEffect(() => {
-                // 1. Cargar datos locales
+                // 1. Cargar datos locales y listas guardadas
                 const savedRecords = localStorage.getItem('eco_records');
                 const savedQueue = localStorage.getItem('eco_sync_queue');
+                const savedStudies = localStorage.getItem('eco_studies_list');
+                const savedDiagnoses = localStorage.getItem('eco_diagnoses_list');
+
                 if (savedRecords) setRecords(JSON.parse(savedRecords));
                 if (savedQueue) setPendingSyncs(JSON.parse(savedQueue));
+                if (savedStudies) setStudiesList(JSON.parse(savedStudies));
+                if (savedDiagnoses) setDiagnosesList(JSON.parse(savedDiagnoses));
 
-                // 2. Manejar Autenticación Anónima
+                // 2. Auth Anónimo
                 if (isConfigured && auth) {
                     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
                         setUser(currentUser);
                         setAuthLoading(false);
-                        if (currentUser) {
-                            console.log("Usuario autenticado:", currentUser.uid);
-                            if (navigator.onLine) syncQueue();
-                        } else {
-                            // Si no hay usuario, intentar loguear anónimamente
-                            signInAnonymously(auth).catch(err => {
-                                console.error("Error Auth Anónimo:", err);
-                                setAuthLoading(false);
-                            });
-                        }
+                        if (currentUser && navigator.onLine) syncQueue();
+                        else if (!currentUser) signInAnonymously(auth).catch(err => {
+                            console.error("Error Auth:", err);
+                            setAuthLoading(false);
+                        });
                     });
                     return () => unsubscribe();
                 }
 
-                // Listener de conexión
-                const handleOnline = () => {
-                    if (user) syncQueue();
-                };
+                const handleOnline = () => { if (user) syncQueue(); };
                 window.addEventListener('online', handleOnline);
                 return () => window.removeEventListener('online', handleOnline);
-            }, [user]); // Dependencia user añadida
+            }, [user]);
+
+            // Funciones para registrar nuevos items globalmente
+            const registerNewStudy = (newStudy) => {
+                 if (!studiesList.includes(newStudy)) {
+                     const updated = [...studiesList, newStudy];
+                     setStudiesList(updated);
+                     localStorage.setItem('eco_studies_list', JSON.stringify(updated));
+                 }
+            }
+
+            const registerNewDiagnosis = (newDiag) => {
+                 if (!diagnosesList.includes(newDiag)) {
+                     const updated = [...diagnosesList, newDiag];
+                     setDiagnosesList(updated);
+                     localStorage.setItem('eco_diagnoses_list', JSON.stringify(updated));
+                 }
+            }
 
             const addToast = (message, type = 'success') => {
                 const id = Date.now();
@@ -299,7 +315,6 @@
                 setRecords(updatedRecords);
                 localStorage.setItem('eco_records', JSON.stringify(updatedRecords));
                 addToast("Registro eliminado");
-                // TODO: Agregar a cola de eliminación para sync
             };
 
             const handleEdit = (record) => {
@@ -324,7 +339,6 @@
                 localStorage.setItem('eco_sync_queue', JSON.stringify(failedSyncs));
             };
 
-            // Mostrar SetupScreen si no está configurado Y no se ha saltado
             if (!isConfigured && !bypassSetup) {
                 return <SetupScreen onContinueOffline={() => setBypassSetup(true)} />;
             }
@@ -340,12 +354,10 @@
                                 <h1 className="text-xl font-bold">Ecografías Pediátricas</h1>
                             </div>
                             <div className="flex items-center gap-3">
-                                {/* Indicador de Auth */}
                                 <div className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${user ? 'bg-medical-700 text-white' : 'bg-slate-500 text-slate-200'}`}>
                                     <User size={12} />
                                     {authLoading ? 'Conectando...' : (user ? 'Anónimo' : 'Offline')}
                                 </div>
-                                {/* Indicador de Sync */}
                                 <div className="text-xs bg-medical-700 px-2 py-1 rounded flex items-center gap-1">
                                     <Database size={12} />
                                     {pendingSyncs.length > 0 ? 'Sincronizando...' : 'Sincronizado'}
@@ -382,6 +394,10 @@
                                 isSubmitting={isSubmitting} 
                                 initialData={editingRecord}
                                 onCancelEdit={() => setEditingRecord(null)}
+                                availableStudies={studiesList}
+                                availableDiagnoses={diagnosesList}
+                                onRegisterStudy={registerNewStudy}
+                                onRegisterDiagnosis={registerNewDiagnosis}
                             />
                         )}
                         {activeTab === 'informes' && (
@@ -407,7 +423,7 @@
         // SUB-COMPONENTES
         // ==========================================
 
-        const EntryForm = ({ onSave, isSubmitting, initialData, onCancelEdit }) => {
+        const EntryForm = ({ onSave, isSubmitting, initialData, onCancelEdit, availableStudies, availableDiagnoses, onRegisterStudy, onRegisterDiagnosis }) => {
             const [formData, setFormData] = useState({
                 date: new Date().toISOString().split('T')[0],
                 patientName: '',
@@ -421,10 +437,8 @@
             const [customDiag, setCustomDiag] = useState('');
             const [customStudy, setCustomStudy] = useState('');
 
-            // Cargar datos si estamos editando
             useEffect(() => {
                 if (initialData) {
-                    // Adaptador para soportar registros viejos con firstName/lastName
                     const patientName = initialData.patientName || `${initialData.firstName} ${initialData.lastName}`.trim();
                     setFormData({ ...initialData, patientName });
                 } else {
@@ -474,6 +488,8 @@
             const addCustomDiagnosis = () => {
                 if (customDiag && !formData.diagnoses.includes(customDiag)) {
                     setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
+                    // Registrar globalmente para futuro
+                    onRegisterDiagnosis(customDiag);
                     setCustomDiag('');
                 }
             };
@@ -481,6 +497,8 @@
             const addCustomStudy = () => {
                 if (customStudy && !formData.studies.includes(customStudy)) {
                     setFormData(prev => ({ ...prev, studies: [...prev.studies, customStudy] }));
+                    // Registrar globalmente para futuro
+                    onRegisterStudy(customStudy);
                     setCustomStudy('');
                 }
             };
@@ -566,7 +584,7 @@
                     <div className="border-t pt-4">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Estudios Realizados</label>
                         <div className="flex flex-wrap gap-2 mb-3">
-                            {ESTUDIOS_DEFECTO.map(study => (
+                            {availableStudies.map(study => (
                                 <button
                                     key={study} type="button" onClick={() => toggleStudy(study)}
                                     className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
@@ -578,7 +596,8 @@
                                     {study}
                                 </button>
                             ))}
-                            {formData.studies.filter(s => !ESTUDIOS_DEFECTO.includes(s)).map(study => (
+                            {/* Renderizar estudios que ya estaban seleccionados pero quizás no están en la lista global (ej: datos viejos) */}
+                            {formData.studies.filter(s => !availableStudies.includes(s)).map(study => (
                                  <button
                                     key={study} type="button" onClick={() => toggleStudy(study)}
                                     className="px-3 py-1.5 rounded-full text-sm font-medium bg-medical-600 text-white shadow-md"
@@ -613,7 +632,7 @@
                                 onChange={handleDiagnosisChange}
                             >
                                 <option value="">Seleccione Diagnóstico...</option>
-                                {DIAGNOSTICOS_COMUNES.map(d => <option key={d} value={d}>{d}</option>)}
+                                {availableDiagnoses.map(d => <option key={d} value={d}>{d}</option>)}
                             </select>
                         </div>
                         <div className="flex gap-2 mb-2">
