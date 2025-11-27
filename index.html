@@ -639,9 +639,19 @@
                 }));
             };
 
-            const addDiagnosis = (diag) => {
-                if (diag && !formData.diagnoses.includes(diag)) {
-                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, diag] }));
+            const handleDiagnosisChange = (e) => {
+                const val = e.target.value;
+                if (val && !formData.diagnoses.includes(val)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, val] }));
+                }
+                e.target.value = ""; 
+            };
+
+            const addCustomDiagnosis = () => {
+                if (customDiag && !formData.diagnoses.includes(customDiag)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
+                    onRegisterDiagnosis(customDiag);
+                    setCustomDiag('');
                 }
             };
             
@@ -655,6 +665,12 @@
 
             const removeDiagnosis = (diag) => {
                 setFormData(prev => ({ ...prev, diagnoses: prev.diagnoses.filter(d => d !== diag) }));
+            };
+
+            const addDiagnosis = (diag) => {
+                if (diag && !formData.diagnoses.includes(diag)) {
+                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, diag] }));
+                }
             };
 
             return (
@@ -792,7 +808,7 @@
                     <div className="border-t pt-4">
                         <label className="block text-sm font-medium text-slate-700 mb-2">Diagnósticos</label>
                         <SearchableDropdown 
-                            options={availableDiagnoses}
+                            options={[...availableDiagnoses].sort((a, b) => a.localeCompare(b, 'es'))}
                             defaultOptions={DIAGNOSTICOS_INICIALES}
                             placeholder="Seleccione o escriba un diagnóstico..."
                             onSelect={addDiagnosis}
