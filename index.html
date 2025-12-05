@@ -853,24 +853,30 @@
 
         const ReportsView = ({ records, onEdit, onDelete, addToast }) => {
             const [filterName, setFilterName] = useState('');
+            const [filterGeneral, setFilterGeneral] = useState(''); // Estado para búsqueda general
             const [dateFrom, setDateFrom] = useState('');
             const [dateTo, setDateTo] = useState('');
 
             const filteredRecords = useMemo(() => {
-                if (!filterName && !dateFrom && !dateTo) return [];
+                if (!filterName && !dateFrom && !dateTo && !filterGeneral) return [];
 
                 return records.filter(r => {
                     const rName = r.patientName || `${r.firstName} ${r.lastName}`;
                     const matchesName = rName.toLowerCase().includes(filterName.toLowerCase());
                     const matchesDateFrom = !dateFrom || r.date >= dateFrom;
                     const matchesDateTo = !dateTo || r.date <= dateTo;
-                    return matchesName && matchesDateFrom && matchesDateTo;
+                    
+                    // Lógica para búsqueda en Diagnósticos y Notas
+                    const searchTerm = filterGeneral.toLowerCase();
+                    const matchesGeneral = !filterGeneral || 
+                        r.diagnoses.some(d => d.toLowerCase().includes(searchTerm)) || 
+                        (r.notes && r.notes.toLowerCase().includes(searchTerm));
+
+                    return matchesName && matchesDateFrom && matchesDateTo && matchesGeneral;
                 }).sort((a,b) => new Date(b.date) - new Date(a.date));
-            }, [records, filterName, dateFrom, dateTo]);
+            }, [records, filterName, dateFrom, dateTo, filterGeneral]);
 
             const lastThreeRecords = useMemo(() => {
-                // Asumiendo que 'records' viene ordenado por fecha de creación (los nuevos al principio)
-                // Si no, habría que ordenar aquí.
                 return records.slice(0, 3);
             }, [records]);
 
@@ -902,7 +908,7 @@
                 document.body.removeChild(link);
             };
 
-            const showEmptyState = !filterName && !dateFrom && !dateTo;
+            const showEmptyState = !filterName && !dateFrom && !dateTo && !filterGeneral;
 
             return (
                 <div className="space-y-6">
@@ -950,8 +956,8 @@
                         </div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 items-end border border-slate-100">
-                        <div className="md:col-span-2">
+                    <div className="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end border border-slate-100">
+                        <div>
                             <label className="text-xs font-bold text-slate-500 uppercase">Buscar Paciente</label>
                             <div className="relative">
                                 <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
@@ -961,6 +967,19 @@
                                     className="w-full pl-10 p-2 border rounded focus:ring-1 focus:ring-medical-500 outline-none"
                                     value={filterName}
                                     onChange={e => setFilterName(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase">Diagnóstico / Notas</label>
+                            <div className="relative">
+                                <FileText className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Hidronefrosis, control..." 
+                                    className="w-full pl-10 p-2 border rounded focus:ring-1 focus:ring-medical-500 outline-none"
+                                    value={filterGeneral}
+                                    onChange={e => setFilterGeneral(e.target.value)}
                                 />
                             </div>
                         </div>
