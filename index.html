@@ -68,7 +68,7 @@
             Activity, Users, FileText, Save, Plus, Trash2, 
             Share2, Download, Search, AlertCircle, CheckCircle, X,
             Calendar, Database, Settings, Edit, User, WifiOff, ChevronDown,
-            PieChart, BarChart2
+            PieChart, BarChart2, Clock
         } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
@@ -417,7 +417,7 @@
             const addToast = (message, type = 'success') => {
                 const id = Date.now();
                 setToasts(prev => [...prev, { id, message, type }]);
-                setTimeout(() => removeToast(id), 2000); // ACTUALIZADO: 2 segundos
+                setTimeout(() => removeToast(id), 3000); // ACTUALIZADO: 3 segundos
             };
 
             const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -445,7 +445,8 @@
                         if (user) syncQueue(newQueue); 
                     }
 
-                    addToast(recordData.id ? "Registro actualizado" : "Registro guardado");
+                    // AQUI: Mensaje de confirmación explícito para nuevos registros
+                    addToast(recordData.id ? "Registro actualizado correctamente" : "Paciente registrado correctamente");
                     setEditingRecord(null); 
                     return true;
                 } catch (error) {
@@ -539,7 +540,7 @@
                             onClick={() => setActiveTab('informes')}
                             className={`flex-1 py-4 text-sm font-medium flex justify-center items-center gap-2 border-b-2 transition-colors ${activeTab === 'informes' ? 'border-medical-600 text-medical-600 bg-medical-50' : 'border-transparent text-slate-500 hover:text-medical-600'}`}
                         >
-                            <FileText size={18} /> Informes
+                            <Search size={18} /> Búsqueda
                         </button>
                         <button 
                             onClick={() => setActiveTab('estadisticas')}
@@ -867,6 +868,12 @@
                 }).sort((a,b) => new Date(b.date) - new Date(a.date));
             }, [records, filterName, dateFrom, dateTo]);
 
+            const lastThreeRecords = useMemo(() => {
+                // Asumiendo que 'records' viene ordenado por fecha de creación (los nuevos al principio)
+                // Si no, habría que ordenar aquí.
+                return records.slice(0, 3);
+            }, [records]);
+
             const handleShare = async (record) => {
                 const rName = record.patientName || `${record.firstName} ${record.lastName}`;
                 const text = `ECOGRAFÍA PEDIÁTRICA\nFecha: ${formatDate(record.date)}\nPaciente: ${rName} (${record.age} ${record.ageUnit})\nTipo: ${record.type}\nEstudios: ${record.studies.join(', ')}\nDiagnósticos: ${record.diagnoses.join(', ')}\nNotas: ${record.notes}`;
@@ -898,8 +905,52 @@
             const showEmptyState = !filterName && !dateFrom && !dateTo;
 
             return (
-                <div className="space-y-4">
-                    <div className="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div className="space-y-6">
+                    {/* NUEVA SECCIÓN: Últimos ingresos */}
+                    <div className="bg-white rounded-lg shadow-sm border border-slate-100 overflow-hidden">
+                        <div className="bg-medical-50 p-3 border-b border-medical-100 flex items-center gap-2">
+                            <Clock size={18} className="text-medical-600" />
+                            <h3 className="font-bold text-medical-700">Últimos Ingresos</h3>
+                        </div>
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {lastThreeRecords.length === 0 ? (
+                                <p className="text-slate-400 text-sm italic col-span-3 text-center py-4">No hay pacientes recientes</p>
+                            ) : (
+                                lastThreeRecords.map(record => {
+                                    const rName = record.patientName || `${record.firstName} ${record.lastName}`;
+                                    return (
+                                        <div key={record.id} className="bg-white border rounded-lg p-3 hover:shadow-md transition-shadow relative group">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <h4 className="font-bold text-slate-800 text-sm truncate w-32 md:w-40">{rName}</h4>
+                                                    <span className="text-xs text-slate-500">{formatDate(record.date)}</span>
+                                                </div>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${record.type === 'Internado' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                                    {record.type.charAt(0)}
+                                                </span>
+                                            </div>
+                                            <div className="text-xs text-slate-600 mb-3 h-10 overflow-hidden">
+                                                <p className="line-clamp-2">{record.studies.join(', ')}</p>
+                                            </div>
+                                            <div className="flex justify-end gap-1 pt-2 border-t mt-auto">
+                                                <button onClick={() => onEdit(record)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded" title="Editar">
+                                                    <Edit size={14} />
+                                                </button>
+                                                <button onClick={() => handleShare(record)} className="p-1.5 text-slate-400 hover:text-medical-600 hover:bg-medical-50 rounded" title="Compartir">
+                                                    <Share2 size={14} />
+                                                </button>
+                                                <button onClick={() => onDelete(record.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded" title="Borrar">
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 items-end border border-slate-100">
                         <div className="md:col-span-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Buscar Paciente</label>
                             <div className="relative">
@@ -939,11 +990,11 @@
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-sm overflow-hidden min-h-[300px]">
+                    <div className="bg-white rounded-lg shadow-sm overflow-hidden min-h-[200px] border border-slate-100">
                         {showEmptyState ? (
                             <div className="p-12 text-center text-slate-400">
                                 <Search className="mx-auto mb-2 opacity-50" size={48} />
-                                <p>Ingrese parámetros de búsqueda para ver resultados</p>
+                                <p>Ingrese parámetros de búsqueda para ver resultados históricos</p>
                             </div>
                         ) : filteredRecords.length === 0 ? (
                             <div className="p-12 text-center text-slate-400">
