@@ -1,6 +1,45 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+    <meta charset="utf-8">
+    <!-- Depurador en pantalla para capturar errores de JS -->
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            var div = document.getElementById('debug-err-console');
+            if (!div) {
+                div = document.createElement('div');
+                div.id = 'debug-err-console';
+                div.style = 'position:fixed;top:0;left:0;width:100%;z-index:99999;background:rgba(220,38,38,0.95);color:white;padding:15px;font-family:monospace;font-size:12px;max-height:50vh;overflow-y:auto;box-shadow:0 4px 10px rgba(0,0,0,0.3);box-sizing:border-box;';
+                var header = document.createElement('h3');
+                header.textContent = '❌ Error de JavaScript Detectado:';
+                header.style = 'margin:0 0 10px 0;font-size:14px;font-weight:bold;';
+                div.appendChild(header);
+                document.body ? document.body.appendChild(div) : document.documentElement.appendChild(div);
+            }
+            var p = document.createElement('p');
+            p.style = 'margin:5px 0;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:5px;word-break:break-all;';
+            p.textContent = message + ' (' + (source ? source.split('/').pop() : 'desconocido') + ':' + lineno + ':' + colno + ')';
+            div.appendChild(p);
+            return false;
+        };
+        window.onunhandledrejection = function(e) {
+            var div = document.getElementById('debug-err-console');
+            if (!div) {
+                div = document.createElement('div');
+                div.id = 'debug-err-console';
+                div.style = 'position:fixed;top:0;left:0;width:100%;z-index:99999;background:rgba(220,38,38,0.95);color:white;padding:15px;font-family:monospace;font-size:12px;max-height:50vh;overflow-y:auto;box-shadow:0 4px 10px rgba(0,0,0,0.3);box-sizing:border-box;';
+                var header = document.createElement('h3');
+                header.textContent = '❌ Promesa Rechazada No Manejada:';
+                header.style = 'margin:0 0 10px 0;font-size:14px;font-weight:bold;';
+                div.appendChild(header);
+                document.body ? document.body.appendChild(div) : document.documentElement.appendChild(div);
+            }
+            var p = document.createElement('p');
+            p.style = 'margin:5px 0;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:5px;word-break:break-all;';
+            p.textContent = 'Promise rejected: ' + (e.reason ? (e.reason.message || e.reason) : 'Razón desconocida');
+            div.appendChild(p);
+        };
+    </script>
     <link rel="icon" type="image/png" href="favicon-96x96.png" sizes="96x96" />
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="shortcut icon" href="favicon.ico" />
@@ -29,11 +68,15 @@
         }
     </script>
 
+    <!-- Polyfill para Import Maps (es-module-shims) para soporte en móviles antiguos y Safari < 16.4 -->
+    <script async src="https://ga.jspm.io/npm:es-module-shims@1.10.0/dist/es-module-shims.js" crossorigin></script>
+
     <!-- Import Map para React y Firebase -->
     <script type="importmap">
         {
             "imports": {
                 "react": "https://esm.sh/react@18.2.0",
+                "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
                 "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
                 "lucide-react": "https://esm.sh/lucide-react@0.263.1",
                 "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
@@ -44,7 +87,7 @@
     </script>
     
     <!-- Babel para JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
 
     <style>
         body { background-color: #f8fafc; }
@@ -64,7 +107,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module">
+    <script type="text/babel" data-type="module" data-presets="react">
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
@@ -128,26 +171,28 @@
         };
 
         const safeCopy = (text, onSuccess, onError) => {
-            try {
-                navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
-                    const textArea = document.createElement("textarea");
-                    textArea.value = text;
-                    textArea.style.position = "fixed"; 
-                    document.body.appendChild(textArea);
-                    textArea.focus();
-                    textArea.select();
-                    try {
-                        const successful = document.execCommand('copy');
-                        document.body.removeChild(textArea);
-                        if (successful) onSuccess();
-                        else onError();
-                    } catch (err) {
-                        document.body.removeChild(textArea);
-                        onError();
-                    }
-                });
-            } catch (e) {
-                onError();
+            const fallbackCopy = () => {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.position = "fixed"; 
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    const successful = document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    if (successful) onSuccess();
+                    else onError();
+                } catch (err) {
+                    document.body.removeChild(textArea);
+                    onError();
+                }
+            };
+
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                navigator.clipboard.writeText(text).then(onSuccess).catch(fallbackCopy);
+            } else {
+                fallbackCopy();
             }
         };
 
@@ -345,9 +390,12 @@
                 if (savedStudies) setStudiesList(JSON.parse(savedStudies));
                 if (savedDiagnoses) setDiagnosesList(JSON.parse(savedDiagnoses));
 
+                let unsubscribeAuth = null;
+                let unsubscribeSnapshot = null;
+
                 // 2. Auth Anónimo y Listener Realtime
                 if (isConfigured && auth) {
-                    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+                    unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
                         setUser(currentUser);
                         setAuthLoading(false);
                         
@@ -356,7 +404,8 @@
                             
                             // === ESCUCHAR CAMBIOS EN LA NUBE ===
                             const q = collection(db, "ecografias");
-                            const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+                            if (unsubscribeSnapshot) unsubscribeSnapshot();
+                            unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
                                 // Obtener datos de la nube
                                 const cloudData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
                                 console.log("Datos sincronizados desde la nube:", cloudData.length);
@@ -367,21 +416,27 @@
                             }, (error) => {
                                 console.error("Error escuchando cambios:", error);
                             });
-
-                            return () => unsubscribeSnapshot();
                         } else {
+                            if (unsubscribeSnapshot) {
+                                unsubscribeSnapshot();
+                                unsubscribeSnapshot = null;
+                            }
                             signInAnonymously(auth).catch(err => {
                                 console.error("Error Auth:", err);
                                 setAuthLoading(false);
                             });
                         }
                     });
-                    return () => unsubscribeAuth();
                 }
 
-                const handleOnline = () => { if (user) syncQueue(); };
+                const handleOnline = () => { if (auth && auth.currentUser) syncQueue(); };
                 window.addEventListener('online', handleOnline);
-                return () => window.removeEventListener('online', handleOnline);
+
+                return () => {
+                    if (unsubscribeAuth) unsubscribeAuth();
+                    if (unsubscribeSnapshot) unsubscribeSnapshot();
+                    window.removeEventListener('online', handleOnline);
+                };
             }, []);
 
             // Funciones para registrar nuevos items globalmente
@@ -651,14 +706,7 @@
                 e.target.value = ""; 
             };
 
-            const addCustomDiagnosis = () => {
-                if (customDiag && !formData.diagnoses.includes(customDiag)) {
-                    setFormData(prev => ({ ...prev, diagnoses: [...prev.diagnoses, customDiag] }));
-                    onRegisterDiagnosis(customDiag);
-                    setCustomDiag('');
-                }
-            };
-            
+
             const addCustomStudy = () => {
                 if (customStudy && !formData.studies.includes(customStudy)) {
                     setFormData(prev => ({ ...prev, studies: [...prev.studies, customStudy] }));
